@@ -6,12 +6,13 @@ const moment = require('moment')
 const dateFormat = 'yyyy-MM-DD HH:mm:ss'
 const MAX_SIZE = 10 * 1024 * 1024
 const logFolder = 'logs'
+const trashFolder = 'trash'
 let lastLabel
 let lastTime
 
 // 如果是 worker 线程，执行写入文件的任务
 if (parentPort) {
-  parentPort.on('message', message => {
+  parentPort.on('message', (message) => {
     const log = joinMsg(message)
     const logMsg = formatLog(log)
     // print
@@ -22,16 +23,30 @@ if (parentPort) {
   })
 }
 
+/**
+ *
+ * @param {string} filePath
+ * @param {string} msg
+ * @returns
+ */
 function writeLogs(filePath, msg) {
+  // 根据日志前的时间戳，找到对应的文件，如果没有则创建，有的话直接在后面接着写
   if (!fs.existsSync(filePath)) {
     fs.writeFileSync(filePath, msg + '\n')
+
+    const expiredFiles = selectFiles()
+    const expiredFilesPath = expiredFiles.map((item) =>
+      path.join(logFolder, item)
+    )
+    expiredFilesPath.forEach((item) => {
+      changeFileName(item)
+    })
   } else {
     fs.appendFileSync(filePath, msg + '\n')
   }
 }
 
 function findLogFilePath(str) {
-  // 根据日志前的时间戳，找到对应的文件，如果没有则创建，有的话直接在后面接着写
   const datePart = str.slice(1, 11)
   const hourPart = str.slice(12, 14)
   const filePrifix = `${datePart}T${hourPart}`
@@ -69,8 +84,8 @@ function getLogFileMaxNum(timePrefix) {
   let maxNum = 0
   const logFilesInHour = fs
     .readdirSync(logFolder)
-    .filter(f => f.startsWith(timePrefix) && f.endsWith('.log'))
-    .map(f => {
+    .filter((f) => f.startsWith(timePrefix) && f.endsWith('.log'))
+    .map((f) => {
       const fileName = f.slice(0, -4) // 去掉文件后缀名
       const lastChar = fileName.slice(-1) // 提取字符串末尾的字符
       return parseInt(lastChar) // 将提取的字符转换为数字
@@ -110,15 +125,43 @@ function joinMsg(msgObj) {
 /**
  * 将文件名改变成过期文件
  */
-function changeFileName() {}
+function changeFileName(filePath) {
+  const fileNameWithExtension = path.basename(filePath)
+  const newFileName = fileNameWithExtension.replace(
+    '.log',
+    `_invalid_${Date.now()}.log`
+  )
+  fs.renameSync(filePath, path.join(logFolder, newFileName))
+}
 
 /**
  * 将文件移动到另一个trash文件夹
  */
-function moveFileToTrash() {}
+function moveFileToTrash(filePath) {
+  fs.renameSync(filePath, path.join(trashFolder, filePath))
+}
 
 /**
  *  从logs文件夹中筛选过期文件，将要移动的文件(不包含当前的日志文件)
  */
 
-function selectFiles() {}
+function selectFiles() {
+  let expiredFiles = []
+  const files = fs.readdirSync(logFolder)
+  const currentHourPrefix = moment().format('YYYY-MM-DDTHH')
+
+  for (const file of files) {
+    if (!file.includes(currentHourPrefix)) {
+      expiredFiles.push(file)
+    }
+  }
+  return expiredFiles
+}
+
+function clearlogFiles() {
+  const files = fs.readdirSync(trashFolder)
+  for (const file of files) {
+    fs.unlinkSync(path.join(trashFolder, file))
+    console.log('Delete log Success!, filename:', file)
+  }
+}
